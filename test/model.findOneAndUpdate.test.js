@@ -11,7 +11,7 @@ var Utils = require('../lib/utils');
 var Schema = mongoose.Schema;
 var ObjectId = Schema.Types.ObjectId;
 var DocumentObjectId = mongoose.Types.ObjectId;
-var _ = require('underscore');
+var _ = require('lodash');
 
 /**
  * Setup.
@@ -936,17 +936,32 @@ describe('model: findByIdAndUpdate:', function() {
             function(error, doc) {
               assert.ifError(error);
               assert.ok(Utils.deepEqual(doc.contacts[0].account, a2._id));
-              assert.ok(_.isEqual(doc.contacts[0].account, a2._id));
+              assert.ok(_.isEqualWith(doc.contacts[0].account, a2._id, compareBuffers));
+              // Re: commends on https://github.com/mongodb/js-bson/commit/aa0b54597a0af28cce3530d2144af708e4b66bf0
+              // Deep equality checks no longer work as expected with node 0.10.
+              // Please file an issue if this is a problem for you
+              if (!/^v0.10.\d+$/.test(process.version)) {
+                assert.ok(_.isEqual(doc.contacts[0].account, a2._id));
+              }
 
               Account.findOne({name: 'parent'}, function(error, doc) {
                 assert.ifError(error);
                 assert.ok(Utils.deepEqual(doc.contacts[0].account, a2._id));
-                assert.ok(_.isEqual(doc.contacts[0].account, a2._id));
+                assert.ok(_.isEqualWith(doc.contacts[0].account, a2._id, compareBuffers));
+                if (!/^v0.10.\d+$/.test(process.version)) {
+                  assert.ok(_.isEqual(doc.contacts[0].account, a2._id));
+                }
                 db.close(done);
               });
             });
       });
     });
+
+    function compareBuffers(a, b) {
+      if (Buffer.isBuffer(a) && Buffer.isBuffer(b)) {
+        return a.toString('hex') === b.toString('hex');
+      }
+    }
   });
 
   it('adds __v on upsert (gh-2122)', function(done) {
@@ -1585,6 +1600,142 @@ describe('model: findByIdAndUpdate:', function() {
 
           done();
         });
+    });
+
+    it('handles setting single embedded docs to null (gh-4281)', function(done) {
+      var foodSchema = new mongoose.Schema({
+        name: { type: String, default: 'Bacon' }
+      });
+
+      var breakfastSchema = new mongoose.Schema({
+        main: foodSchema,
+        for: String
+      });
+
+      var TestModel = db.model('gh4281', breakfastSchema);
+      var options = { upsert: true, new: true };
+      var update = { $set: { main: null, for: 'Val' } };
+
+      TestModel.findOneAndUpdate({}, update, options).
+        exec(function(error, doc) {
+          assert.ifError(error);
+          assert.ok(doc);
+          assert.equal(doc.main, null);
+
+          done();
+        });
+    });
+
+    it('custom validator on mixed field (gh-4305)', function(done) {
+      var called = 0;
+
+      var boardSchema = new Schema({
+        name: {
+          type: String,
+          required: true
+        },
+        structure: {
+          type: Schema.Types.Mixed,
+          required: true,
+          validate: {
+            validator: function() {
+              ++called;
+              return true;
+            },
+            message: 'The structure of the board is invalid'
+          }
+        }
+      });
+      var Board = db.model('gh4305', boardSchema);
+
+      var update = {
+        structure: [
+          {
+            capacity: 0,
+            size: 0,
+            category: 0,
+            isColumn: true,
+            title: 'Backlog'
+          }
+        ]
+      };
+      var opts = {
+        'new': true,
+        upsert: false,
+        passRawResult: false,
+        overwrite: false,
+        runValidators: true,
+        setDefaultsOnInsert: true
+      };
+      Board.
+        findOneAndUpdate({}, update, opts).
+        exec(function(error) {
+          assert.ifError(error);
+          assert.equal(called, 1);
+          done();
+        });
+    });
+
+    it('single nested doc cast errors (gh-3602)', function(done) {
+      var AddressSchema = new Schema({
+        street: {
+          type: Number
+        }
+      });
+
+      var PersonSchema = new Schema({
+        addresses: [AddressSchema]
+      });
+
+      var Person = db.model('gh3602', PersonSchema);
+
+      var update = { $push: { addresses: { street: 'not a num' } } };
+      Person.findOneAndUpdate({}, update, function(error) {
+        assert.ok(error.message.indexOf('street') !== -1);
+        assert.equal(error.reason.message,
+          'Cast to Number failed for value "not a num" at path "street"');
+        done();
+      });
+    });
+
+    it('projection option as alias for fields (gh-4315)', function(done) {
+      var TestSchema = new Schema({
+        test1: String,
+        test2: String
+      });
+      var Test = db.model('gh4315', TestSchema);
+      var update = { $set: { test1: 'a', test2: 'b' } };
+      var options = { projection: { test2: 0 }, new: true, upsert: true };
+      Test.findOneAndUpdate({}, update, options, function(error, doc) {
+        assert.ifError(error);
+        assert.ok(!doc.test2);
+        assert.equal(doc.test1, 'a');
+        done();
+      });
+    });
+
+    it('doesnt do double validation on document arrays during updates (gh-4440)', function(done) {
+      var A = new Schema({str: String});
+      var B = new Schema({a: [A]});
+      var validateCalls = 0;
+      B.path('a').validate(function(val, next) {
+        ++validateCalls;
+        assert(Array.isArray(val));
+        next();
+      });
+
+      B = db.model('b', B);
+
+      B.findOneAndUpdate(
+        {foo: 'bar'},
+        {$set: {a: [{str: 'asdf'}]}},
+        {runValidators: true},
+        function(err) {
+          assert.ifError(err);
+          assert.equal(validateCalls, 1); // Assertion error: 1 == 2
+          db.close(done);
+        }
+      );
     });
   });
 });

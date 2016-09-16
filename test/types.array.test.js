@@ -36,7 +36,6 @@ describe('types array', function() {
     assert.ok(a.isMongooseArray);
     assert.equal(Array.isArray(a), true);
 
-    assert.deepEqual(Object.keys(a), Object.keys(a.toObject()));
     assert.deepEqual(a._atomics.constructor, Object);
     done();
   });
@@ -770,6 +769,37 @@ describe('types array', function() {
             assert.equal(gnr.members[1].name, 'Izzy');
             assert.equal(gnr.members[2].name, 'Duff');
             assert.equal(gnr.members[3].name, 'Adler');
+            db.close(done);
+          });
+        });
+      });
+    });
+
+    it('properly works with undefined', function(done) {
+      var db = start();
+      var catschema = new Schema({ name: String, colors: [{hex: String}] });
+      var Cat = db.model('Cat', catschema);
+
+      var cat = new Cat({name: 'peanut', colors: [
+        {hex: '#FFF'}, {hex: '#000'}, null
+      ]});
+
+      cat.save(function(err) {
+        assert.ifError(err);
+
+        cat.colors.pull(undefined); // converted to null (as mongodb does)
+        assert.equal(cat.colors.length, 2);
+        assert.equal(cat.colors[0].hex, '#FFF');
+        assert.equal(cat.colors[1].hex, '#000');
+
+        cat.save(function(err) {
+          assert.ifError(err);
+
+          Cat.findById(cat._id, function(err, doc) {
+            assert.ifError(err);
+            assert.equal(doc.colors.length, 2);
+            assert.equal(doc.colors[0].hex, '#FFF');
+            assert.equal(doc.colors[1].hex, '#000');
             db.close(done);
           });
         });

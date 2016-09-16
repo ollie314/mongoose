@@ -1836,5 +1836,224 @@ describe('model: update:', function() {
         done();
       });
     });
+
+    it('update validators on single nested (gh-4332)', function(done) {
+      var AreaSchema = new Schema({
+        a: String
+      });
+
+      var CompanySchema = new Schema({
+        area: {
+          type: AreaSchema,
+          validate: {
+            validator: function() {
+              return false;
+            },
+            message: 'Not valid Area'
+          }
+        }
+      });
+
+      var Company = mongoose.model('Company', CompanySchema);
+
+      var update = {
+        area: {
+          a: 'Helo'
+        }
+      };
+
+      var opts = {
+        runValidators: true
+      };
+
+      Company.update({}, update, opts, function(error) {
+        assert.ok(error);
+        assert.equal(error.errors['area'].message, 'Not valid Area');
+        done();
+      });
+    });
+
+    it('updates child schema timestamps with $push (gh-4049)', function(done) {
+      var opts = {
+        timestamps: true,
+        toObject: {
+          virtuals: true
+        },
+        toJSON: {
+          virtuals: true
+        }
+      };
+
+      var childSchema = new mongoose.Schema({
+        senderId: { type: String }
+      }, opts);
+
+      var parentSchema = new mongoose.Schema({
+        children: [childSchema]
+      }, opts);
+
+      var Parent = db.model('gh4049', parentSchema);
+
+      var b2 = new Parent();
+      b2.save(function(err, doc) {
+        var query = { _id: doc._id };
+        var update = { $push: { children: { senderId: '234' } } };
+        var opts = { 'new': true };
+        Parent.findOneAndUpdate(query, update, opts).exec(function(error, res) {
+          assert.ifError(error);
+          assert.equal(res.children.length, 1);
+          assert.equal(res.children[0].senderId, '234');
+          assert.ok(res.children[0].createdAt);
+          assert.ok(res.children[0].updatedAt);
+          done();
+        });
+      });
+    });
+
+    it('updates child schema timestamps with $set (gh-4049)', function(done) {
+      var opts = {
+        timestamps: true,
+        toObject: {
+          virtuals: true
+        },
+        toJSON: {
+          virtuals: true
+        }
+      };
+
+      var childSchema = new mongoose.Schema({
+        senderId: { type: String }
+      }, opts);
+
+      var parentSchema = new mongoose.Schema({
+        children: [childSchema],
+        child: childSchema
+      }, opts);
+
+      var Parent = db.model('gh4049_0', parentSchema);
+
+      var b2 = new Parent();
+      b2.save(function(err, doc) {
+        var query = { _id: doc._id };
+        var update = {
+          $set: {
+            children: [{ senderId: '234' }],
+            child: { senderId: '567' }
+          }
+        };
+        var opts = { 'new': true };
+        Parent.findOneAndUpdate(query, update, opts).exec(function(error, res) {
+          assert.ifError(error);
+          assert.equal(res.children.length, 1);
+          assert.equal(res.children[0].senderId, '234');
+          assert.ok(res.children[0].createdAt);
+          assert.ok(res.children[0].updatedAt);
+
+          assert.ok(res.child.createdAt);
+          assert.ok(res.child.updatedAt);
+          done();
+        });
+      });
+    });
+
+    it('handles positional operator with timestamps (gh-4418)', function(done) {
+      var schema = new Schema({
+        thing: [{
+          thing2: { type: String },
+          test: String
+        }]
+      }, { timestamps: true });
+
+      var Model = db.model('gh4418', schema);
+      var query = { 'thing.thing2': 'test' };
+      var update = { $set: { 'thing.$.test': 'test' } };
+      Model.update(query, update, function(error) {
+        assert.ifError(error);
+        done();
+      });
+    });
+
+    it('update handles casting with mongoose-long (gh-4283)', function(done) {
+      require('mongoose-long')(mongoose);
+
+      var Model = db.model('gh4283', {
+        number: { type: mongoose.Types.Long }
+      });
+
+      Model.create({ number: mongoose.mongo.Long.fromString('0') }, function(error) {
+        assert.ifError(error);
+        Model.update({}, { $inc: { number: mongoose.mongo.Long.fromString('2147483648') } }, function(error) {
+          assert.ifError(error);
+          Model.findOne({ number: { $type: 18 } }, function(error, doc) {
+            assert.ifError(error);
+            assert.ok(doc);
+            done();
+          });
+        });
+      });
+    });
+
+    it('single nested with runValidators (gh-4420)', function(done) {
+      var FileSchema = new Schema({
+        name: String
+      });
+
+      var CompanySchema = new Schema({
+        name: String,
+        file: FileSchema
+      });
+
+      var Company = db.model('Company', CompanySchema);
+
+      Company.create({ name: 'Booster Fuels' }, function(error) {
+        assert.ifError(error);
+        var update = { file: { name: 'new-name' } };
+        var options = { runValidators: true };
+        Company.update({}, update, options, function(error) {
+          assert.ifError(error);
+          done();
+        });
+      });
+    });
+
+    it('single nested schema with geo (gh-4465)', function(done) {
+      var addressSchema = new Schema({
+        geo: {type: [Number], index: '2dsphere'}
+      }, { _id : false });
+      var containerSchema = new Schema({ address: addressSchema });
+      var Container = db.model('gh4465', containerSchema);
+
+      Container.update({}, { address: { geo: [-120.24, 39.21] } }).
+        exec(function(error) {
+          assert.ifError(error);
+          done();
+        });
+    });
+
+    it('runs validation on Mixed properties of embedded arrays during updates (gh-4441)', function(done) {
+      var db = start();
+
+      var A = new Schema({ str: {} });
+      var validateCalls = 0;
+      A.path('str').validate(function(val, next) {
+        ++validateCalls;
+        next();
+      });
+
+      var B = new Schema({a: [A]});
+
+      B = db.model('b', B);
+
+      B.findOneAndUpdate(
+        {foo: 'bar'},
+        {$set: {a: [{str: {somekey: 'someval'}}]}},
+        {runValidators: true},
+        function(err) {
+          assert.ifError(err);
+          assert.equal(validateCalls, 1); // AssertionError: 0 == 1
+          db.close(done);
+        }
+      );
+    });
   });
 });

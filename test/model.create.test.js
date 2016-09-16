@@ -7,7 +7,8 @@ var start = require('./common'),
     mongoose = start.mongoose,
     random = require('../lib/utils').random,
     Schema = mongoose.Schema,
-    DocumentObjectId = mongoose.Types.ObjectId;
+    DocumentObjectId = mongoose.Types.ObjectId,
+    PromiseProvider = require('../lib/promise_provider');
 
 /**
  * Setup
@@ -63,6 +64,30 @@ describe('model', function() {
         assert.ifError(err);
         assert.ok(!a);
         done();
+      });
+    });
+
+    it('should not cause unhandled reject promise', function(done) {
+      mongoose.Promise = global.Promise;
+      mongoose.Promise = require('bluebird');
+
+      B.create({title: 'reject promise'}, function(err, b) {
+        assert.ifError(err);
+
+        var perr = null;
+        var p = B.create({_id: b._id}, function(err) {
+          assert(err);
+          setTimeout(function() {
+            PromiseProvider.reset();
+            // perr should be null
+            done(perr);
+          }, 100);
+        });
+
+        p.catch(function(err) {
+          // should not go here
+          perr = err;
+        });
       });
     });
 

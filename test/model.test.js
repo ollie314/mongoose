@@ -4111,7 +4111,7 @@ describe('Model', function() {
           promise.onResolve(function(err, found) {
             db.close();
             assert.ifError(err);
-            assert.equal(found._id.id, created._id.id);
+            assert.equal(found._id.toHexString(), created._id.toHexString());
             done();
           });
         });
@@ -5229,6 +5229,31 @@ describe('Model', function() {
       });
     });
 
+    it('insertMany() hooks (gh-3846)', function(done) {
+      var schema = new Schema({
+        name: String
+      });
+      var calledPre = 0;
+      var calledPost = 0;
+      schema.pre('insertMany', function(next) {
+        ++calledPre;
+        next();
+      });
+      schema.post('insertMany', function() {
+        ++calledPost;
+      });
+      var Movie = db.model('gh3846', schema);
+
+      var arr = [{ name: 'Star Wars' }, { name: 'The Empire Strikes Back' }];
+      Movie.insertMany(arr, function(error, docs) {
+        assert.ifError(error);
+        assert.equal(docs.length, 2);
+        assert.equal(calledPre, 1);
+        assert.equal(calledPost, 1);
+        done();
+      });
+    });
+
     it('insertMany() with timestamps (gh-723)', function(done) {
       var schema = new Schema({
         name: String
@@ -5245,6 +5270,111 @@ describe('Model', function() {
           assert.ifError(error);
           assert.equal(docs.length, 2);
           done();
+        });
+      });
+    });
+
+    it('insertMany() with promises (gh-4237)', function(done) {
+      var schema = new Schema({
+        name: String
+      });
+      var Movie = db.model('gh4237', schema);
+
+      var arr = [{ name: 'Star Wars' }, { name: 'The Empire Strikes Back' }];
+      Movie.insertMany(arr).then(function(docs) {
+        assert.equal(docs.length, 2);
+        assert.ok(!docs[0].isNew);
+        assert.ok(!docs[1].isNew);
+        Movie.find({}, function(error, docs) {
+          assert.ifError(error);
+          assert.equal(docs.length, 2);
+          done();
+        });
+      });
+    });
+
+    it('method with same name as prop should throw (gh-4475)', function(done) {
+      var testSchema = new mongoose.Schema({
+        isPaid: Boolean
+      });
+      testSchema.methods.isPaid = function() {
+        return false;
+      };
+
+      var threw = false;
+      try {
+        db.model('gh4475', testSchema);
+      } catch (error) {
+        threw = true;
+        assert.equal(error.message, 'You have a method and a property in ' +
+          'your schema both named "isPaid"');
+      }
+      assert.ok(threw);
+      done();
+    });
+
+    it('emits errors in create cb (gh-3222) (gh-3478)', function(done) {
+      var schema = new Schema({ name: 'String' });
+      var Movie = db.model('gh3222', schema);
+
+      Movie.on('error', function(error) {
+        assert.equal(error.message, 'fail!');
+        done();
+      });
+
+      Movie.create({ name: 'Conan the Barbarian' }, function(error) {
+        assert.ifError(error);
+        throw new Error('fail!');
+      });
+    });
+
+    it('create() reuses existing doc if one passed in (gh-4449)', function(done) {
+      var testSchema = new mongoose.Schema({
+        name: String
+      });
+      var Test = db.model('gh4449_0', testSchema);
+
+      var t = new Test();
+      Test.create(t, function(error, t2) {
+        assert.ifError(error);
+        assert.ok(t === t2);
+        done();
+      });
+    });
+
+    it('creates new array when initializing from existing doc (gh-4449)', function(done) {
+      var TodoSchema = new mongoose.Schema({
+        title: String
+      }, { _id: false });
+
+      var UserSchema = new mongoose.Schema({
+        name: String,
+        todos: [TodoSchema]
+      });
+      var User = db.model('User', UserSchema);
+
+      var val = new User({ name: 'Val' });
+      User.create(val, function(error, val) {
+        assert.ifError(error);
+        val.todos.push({ title: 'Groceries' });
+        val.save(function(error) {
+          assert.ifError(error);
+          User.findById(val, function(error, val) {
+            assert.ifError(error);
+            assert.deepEqual(val.toObject().todos, [{ title: 'Groceries' }]);
+            var u2 = new User();
+            val.todos = u2.todos;
+            val.todos.push({ title: 'Cook' });
+            val.save(function(error) {
+              assert.ifError(error);
+              User.findById(val, function(error, val) {
+                assert.ifError(error);
+                assert.equal(val.todos.length, 1);
+                assert.equal(val.todos[0].title, 'Cook');
+                done();
+              });
+            });
+          });
         });
       });
     });

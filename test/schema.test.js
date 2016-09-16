@@ -399,6 +399,33 @@ describe('schema', function() {
       assert.equal(typeof mixed[3], 'object');
       assert.ok(mixed[4] instanceof Date);
       assert.ok(mixed[5] instanceof DocumentObjectId);
+
+      done();
+    });
+
+    it('array of arrays', function(done) {
+      var test = new Schema({
+        nums: [[Number]]
+      });
+      var nums = test.path('nums').cast([['1', '2']]);
+      assert.equal(nums.length, 1);
+      assert.deepEqual(nums[0].toObject(), [1, 2]);
+
+      nums = test.path('nums').cast(1);
+      assert.equal(nums.length, 1);
+      assert.deepEqual(nums[0].toObject(), [1]);
+
+      var threw = false;
+      try {
+        test.path('nums').cast([['abcd']]);
+      } catch (error) {
+        threw = true;
+        assert.equal(error.name, 'CastError');
+        assert.equal(error.message,
+          'Cast to [[number]] failed for value "[["abcd"]]" at path "nums"');
+      }
+      assert.ok(threw);
+
       done();
     });
 
@@ -747,15 +774,15 @@ describe('schema', function() {
 
       Tobi.pre('save', function() {
       });
-      assert.equal(Tobi.callQueue.length, 3);
+      assert.equal(Tobi.callQueue.length, 5);
 
       Tobi.post('save', function() {
       });
-      assert.equal(Tobi.callQueue.length, 4);
+      assert.equal(Tobi.callQueue.length, 6);
 
       Tobi.pre('save', function() {
       });
-      assert.equal(Tobi.callQueue.length, 5);
+      assert.equal(Tobi.callQueue.length, 7);
       done();
     });
   });
@@ -822,6 +849,12 @@ describe('schema', function() {
         assert.equal(i.unique, true);
         assert.equal(i.sparse, true);
         assert.equal(i.expireAfterSeconds, 60 * 60 * 24);
+
+        T = new Schema({
+          name: {type: String, index: false, unique: false}
+        });
+        assert.equal(T.path('name')._index, false);
+        assert.equal(T.indexes().length, 0);
 
         done();
       });
@@ -1198,6 +1231,16 @@ describe('schema', function() {
           done();
         });
       });
+    });
+
+    it('prefix (gh-1730)', function(done) {
+      var s = new Schema({});
+
+      s.add({ n: Number }, 'prefix.');
+
+      assert.equal(s.pathType('prefix.n'), 'real');
+      assert.equal(s.pathType('prefix'), 'nested');
+      done();
     });
   });
 
